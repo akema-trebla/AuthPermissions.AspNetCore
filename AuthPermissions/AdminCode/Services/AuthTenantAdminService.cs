@@ -281,10 +281,11 @@ namespace AuthPermissions.AdminCode.Services
                                 nameof(databaseInfoName).CamelToPascal());
 
 
+                        //A child shares its parent's database, so the parent's HasOwnDb and DatabaseInfoName are used as they are.
+                        //NOTE: CheckHasOwnDbIsValidAsync isn't called here, because the parent already uses that database
+                        //and it would always fail if the parent's HasOwnDb is true.
                         hasOwnDb = parentTenant.HasOwnDb;
                         databaseInfoName = parentTenant.DatabaseInfoName;
-
-                        status.CombineStatuses(await CheckHasOwnDbIsValidAsync((bool)hasOwnDb, databaseInfoName));
                     }
                     else
                     {
@@ -683,6 +684,17 @@ namespace AuthPermissions.AdminCode.Services
                 var previousDatabaseInfoName = tenant.DatabaseInfoName;
                 var previousDataKey = tenant.GetTenantDataKey();
                 tenant.UpdateShardingState(databaseInfoName, hasOwnDb);
+
+                if (tenant.IsHierarchical)
+                {
+                    //The children share the top tenant's database, and the ITenantChangeService moves their data
+                    //along with the top tenant's, so their sharding state must follow
+                    var children = await _context.Tenants
+                        .Where(x => x.ParentDataKey != null && x.ParentDataKey.StartsWith(previousDataKey))
+                        .ToListAsync();
+                    foreach (var child in children)
+                        child.UpdateShardingState(databaseInfoName, hasOwnDb);
+                }
 
                 if (status.CombineStatuses(await _context.SaveChangesWithChecksAsync(_localizeDefault)).HasErrors)
                     return status;
